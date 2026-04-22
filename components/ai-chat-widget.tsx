@@ -98,20 +98,43 @@ export function AIChatWidget({
         throw new Error('No response body')
       }
 
-      let accumulatedContent = ''
+      // JSON-lines protocol from /api/chat:
+      //   {"s": "<text>"} → status update (replaces current status)
+      //   {"c": "<text>"} → content chunk (appends to answer)
+      //   {"e": "<text>"} → error
+      // Status shown only while content is empty; content replaces status.
+      let parseBuffer = ''
+      let statusLine = ''
+      let contentBuffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const chunk = decoder.decode(value, { stream: true })
-        accumulatedContent += chunk
+        parseBuffer += decoder.decode(value, { stream: true })
+        const lines = parseBuffer.split('\n')
+        parseBuffer = lines.pop() || ''
 
-        // Update the assistant message with accumulated content
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try {
+            const obj = JSON.parse(trimmed)
+            if (typeof obj.s === 'string') statusLine = obj.s
+            else if (typeof obj.c === 'string') contentBuffer += obj.c
+            else if (typeof obj.e === 'string')
+              contentBuffer += `\n\n⚠️ ${obj.e}`
+          } catch {
+            // not JSON — treat as raw content (back-compat)
+            contentBuffer += trimmed
+          }
+        }
+
+        const display = contentBuffer || statusLine
         setMessages(prev =>
           prev.map(msg =>
             msg.id === assistantMessageId
-              ? { ...msg, content: accumulatedContent }
+              ? { ...msg, content: display }
               : msg
           )
         )

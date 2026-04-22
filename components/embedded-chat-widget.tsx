@@ -88,15 +88,43 @@ export function EmbeddedChatWidget({
       const decoder = new TextDecoder()
       if (!reader) throw new Error('No response body')
 
-      let accumulatedContent = ''
+      // JSON-lines protocol from /api/chat:
+      //   {"s": "<text>"} → status update (replaces current status)
+      //   {"c": "<text>"} → content chunk (appends to answer)
+      //   {"e": "<text>"} → error
+      // Status is shown only while content is empty. Once content arrives,
+      // the status disappears — clean handoff.
+      let parseBuffer = ''
+      let statusLine = ''
+      let contentBuffer = ''
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        accumulatedContent += decoder.decode(value, { stream: true })
+        parseBuffer += decoder.decode(value, { stream: true })
+        const lines = parseBuffer.split('\n')
+        parseBuffer = lines.pop() || ''
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+          try {
+            const obj = JSON.parse(trimmed)
+            if (typeof obj.s === 'string') statusLine = obj.s
+            else if (typeof obj.c === 'string') contentBuffer += obj.c
+            else if (typeof obj.e === 'string')
+              contentBuffer += `\n\n⚠️ ${obj.e}`
+          } catch {
+            // not JSON — treat as raw content (back-compat)
+            contentBuffer += trimmed
+          }
+        }
+
+        const display = contentBuffer || statusLine
         setMessages(prev =>
           prev.map(msg =>
             msg.id === assistantMessageId
-              ? { ...msg, content: accumulatedContent }
+              ? { ...msg, content: display }
               : msg
           )
         )

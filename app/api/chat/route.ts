@@ -7,6 +7,12 @@ export const maxDuration = 50
 
 const SESSION_COOKIE = 'open_notebook_session'
 
+// JSON-lines protocol between this route and the widget client:
+//   {"s": "<text>"}   → status update (replaces the current status slot)
+//   {"c": "<text>"}   → content chunk (appends to the answer)
+//   {"e": "<text>"}   → error (client shows it inline)
+// Each object is on its own line terminated with \n.
+
 export async function POST(req: Request) {
   try {
     const { messages } = await req.json()
@@ -28,8 +34,7 @@ export async function POST(req: Request) {
     if (!currentQuestion) throw new Error('No question provided')
 
     // Session lookup happens BEFORE streaming starts so we can set the cookie
-    // on the outgoing Response. Upstream RAG call happens inside the stream
-    // so the first byte (status message) flushes instantly.
+    // on the outgoing Response. Upstream RAG call happens inside the stream.
     const cookieStore = await cookies()
     let sessionId = cookieStore.get(SESSION_COOKIE)?.value
 
@@ -72,9 +77,8 @@ export async function POST(req: Request) {
 
     const encoder = new TextEncoder()
 
-    // Progressive status messages shown while waiting for upstream.
-    // Rotates every ~3.5s so the user sees the agent "thinking" — also
-    // keeps Netlify's proxy connection alive with regular bytes.
+    // Rotating status messages — cycle indefinitely until upstream answer starts.
+    // Cycling guarantees continuous byte flow (no idle gap → no proxy 502).
     const statusMessages = [
       "🔍 *L'agente ha cominciato la ricerca...*",
       '📖 *Analizzando la normativa...*',
@@ -84,24 +88,25 @@ export async function POST(req: Request) {
       '📝 *Preparando la risposta...*',
     ]
 
+    const emit = (controller: ReadableStreamDefaultController<Uint8Array>, obj: object) => {
+      try {
+        controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'))
+      } catch {
+        // controller closed
+      }
+    }
+
     const stream = new ReadableStream({
       async start(controller) {
-        // Flush the first status immediately — fixes Netlify proxy 502s and
-        // gives the user feedback the moment they hit send.
-        controller.enqueue(encoder.encode(statusMessages[0] + '\n\n'))
+        // Flush first status immediately — fixes Netlify first-byte 502s.
+        emit(controller, { s: statusMessages[0] })
 
-        // Rotate through status messages every ~3.5s while we wait for
-        // upstream. Stops as soon as the real answer starts streaming.
+        // Rotate every 8s, cycling forever until the answer arrives.
         let statusIdx = 1
         const statusTicker = setInterval(() => {
-          if (statusIdx >= statusMessages.length) return
-          try {
-            controller.enqueue(encoder.encode(statusMessages[statusIdx] + '\n\n'))
-            statusIdx++
-          } catch {
-            // controller closed
-          }
-        }, 3500)
+          emit(controller, { s: statusMessages[statusIdx % statusMessages.length] })
+          statusIdx++
+        }, 8000)
 
         try {
           const response = await fetch(`${openNotebookEndpoint}/api/chat/rag/execute`, {
@@ -113,11 +118,9 @@ export async function POST(req: Request) {
           if (!response.ok) {
             const errorText = await response.text()
             clearInterval(statusTicker)
-            controller.enqueue(
-              encoder.encode(
-                `\n\n⚠️ Errore dal server: ${response.status} ${response.statusText}\n${errorText.substring(0, 200)}`
-              )
-            )
+            emit(controller, {
+              e: `Errore dal server: ${response.status} ${response.statusText} — ${errorText.substring(0, 200)}`,
+            })
             controller.close()
             return
           }
@@ -132,7 +135,6 @@ export async function POST(req: Request) {
           const decoder = new TextDecoder()
           let buffer = ''
           let accumulatedContent = ''
-          let answerStarted = false
 
           while (true) {
             const { done, value } = await reader.read()
@@ -153,16 +155,11 @@ export async function POST(req: Request) {
                 if (parsed.type === 'answer') {
                   const content = parsed.content || ''
                   if (!content) continue
-                  // Stop rotating statuses and add a separator before the answer
-                  if (!answerStarted) {
-                    clearInterval(statusTicker)
-                    controller.enqueue(encoder.encode('\n---\n\n'))
-                    answerStarted = true
-                  }
-                  // Only emit new tail (upstream sends accumulated content)
+                  clearInterval(statusTicker)
+                  // Upstream sends accumulated content; only emit new tail.
                   if (content.length > accumulatedContent.length) {
                     const newContent = content.substring(accumulatedContent.length)
-                    controller.enqueue(encoder.encode(newContent))
+                    emit(controller, { c: newContent })
                     accumulatedContent = content
                   }
                 } else if (parsed.type === 'complete') {
@@ -171,11 +168,11 @@ export async function POST(req: Request) {
                   return
                 } else if (parsed.type === 'error') {
                   clearInterval(statusTicker)
-                  controller.enqueue(encoder.encode(`\n\n⚠️ Errore: ${parsed.message}`))
+                  emit(controller, { e: parsed.message || 'Upstream error' })
                   controller.close()
                   return
                 }
-                // 'strategy' events are ignored — the rotating statuses cover UX
+                // strategy events are ignored — rotating statuses cover UX
               } catch {
                 // skip malformed SSE lines
               }
@@ -186,7 +183,7 @@ export async function POST(req: Request) {
         } catch (error) {
           clearInterval(statusTicker)
           const msg = error instanceof Error ? error.message : 'Unknown error'
-          controller.enqueue(encoder.encode(`\n\n⚠️ Errore di rete: ${msg}`))
+          emit(controller, { e: `Errore di rete: ${msg}` })
           controller.close()
         }
       },
@@ -194,10 +191,9 @@ export async function POST(req: Request) {
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+        'Content-Type': 'application/x-ndjson; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
-        // Hint to proxies (nginx, etc) to not buffer the response
         'X-Accel-Buffering': 'no',
       },
     })
