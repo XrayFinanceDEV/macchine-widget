@@ -1,20 +1,21 @@
 import { EmbeddedChatWidget } from '@/components/embedded-chat-widget'
 
 export const metadata = {
-  title: 'CSI Brescia Calcio a 7',
+  title: 'Regolamento Macchine — Assistente AI',
 }
 
 export default function WidgetPage() {
   return (
     <div style={{ height: '100vh', overflow: 'hidden' }}>
       <EmbeddedChatWidget
-        title="CSI Brescia Calcio a 7"
-        subtitle="Powered by brix-ia.com"
-        welcomeMessage="Ciao! Sono l'assistente AI del CSI Brescia Calcio a 7. Chiedimi tutto sul regolamento, tessere e campionati!"
+        title="Regolamento Macchine"
+        subtitle="Reg. (UE) 2023/1230"
+        welcomeMessage="Ciao! Sono l'assistente AI sul Regolamento Macchine (UE) 2023/1230. Fammi una domanda sul testo del regolamento o sulle sue criticità applicative."
         quickActions={[
-          'Posso tesserare un giocatore di prima categoria?',
-          'La rimessa laterale si fa con le mani o con i piedi?',
-          'Dopo quanti gialli devo saltare una giornata?',
+          "Quali macchine sono ad alto rischio nell'Allegato I?",
+          'Qual è la differenza tra Parte A e Parte B?',
+          'Cosa cambia rispetto alla Direttiva 2006/42/CE?',
+          'Quali sono gli obblighi del fabbricante?',
         ]}
       />
     </div>
