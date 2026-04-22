@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test AI Chat Widget Embed</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      line-height: 1.6;
+    }
+    
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+    }
+    
+    .hero {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 60px 40px;
+      border-radius: 12px;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+    
+    .content {
+      background: #f8f9fa;
+      padding: 40px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    
+    .instructions {
+      background: #fff3cd;
+      border-left: 4px solid #ffc107;
+      padding: 20px;
+      margin-top: 20px;
+      border-radius: 4px;
+    }
+    
+    code {
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+    }
+    
+    .success {
+      background: #d4edda;
+      border-left: 4px solid #28a745;
+      padding: 20px;
+      margin-top: 20px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>🤖 AI Chat Widget Test</h1>
+    <p style="font-size: 1.2em; margin: 0;">Questa è una pagina di test per l'embed del widget</p>
+  </div>
+
+  <div class="content">
+    <h2>Benvenuto!</h2>
+    <p>
+      Questa pagina dimostra come integrare l'AI Chat Widget in qualsiasi sito HTML, 
+      incluso WordPress, Wix, Squarespace, o un sito statico.
+    </p>
+    
+    <p>
+      Il widget appare come un <strong>pulsante fluttuante</strong> 💬 in basso a destra. 
+      Cliccalo per aprire la chat!
+    </p>
+
+    <h3>✨ Caratteristiche</h3>
+    <ul>
+      <li>🧠 <strong>Memoria conversazionale</strong> - Ricorda il contesto della conversazione</li>
+      <li>🔍 <strong>RAG dinamico</strong> - Cerca nei documenti per ogni domanda</li>
+      <li>📱 <strong>Mobile responsive</strong> - Funziona perfettamente su smartphone</li>
+      <li>🎨 <strong>Personalizzabile</strong> - Colori, testi e posizione configurabili</li>
+      <li>⚡ <strong>Veloce</strong> - Carica in meno di 1 secondo</li>
+    </ul>
+
+    <div class="success">
+      <strong>✅ Il widget è attivo!</strong><br>
+      Guarda in basso a destra per vedere il pulsante fluttuante.
+    </div>
+
+    <div class="instructions">
+      <strong>📝 Per integrare sul tuo sito:</strong><br><br>
+      1. Copia questo snippet prima del tag <code>&lt;/body&gt;</code>:<br><br>
+      <code style="display: block; padding: 10px; background: white; margin-top: 10px;">
+        &lt;script&gt;<br>
+        &nbsp;&nbsp;window.AIWidgetConfig = {<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;baseUrl: 'https://kpsfinanciallab.w3pro.it:3000'<br>
+        &nbsp;&nbsp;};<br>
+        &lt;/script&gt;<br>
+        &lt;script src="https://kpsfinanciallab.w3pro.it:3000/embed.js"&gt;&lt;/script&gt;
+      </code>
+    </div>
+
+    <h3>🎬 Prova il Widget</h3>
+    <p>Clicca sul pulsante 💬 in basso a destra e prova a chiedere:</p>
+    <ul>
+      <li>"Di cosa parla questo documento?"</li>
+      <li>"Quali sono le regole principali?"</li>
+      <li>"Spiegami meglio il primo punto" (test memoria conversazionale)</li>
+    </ul>
+
+    <h3>🔧 Debug</h3>
+    <p>Apri la console del browser (F12) per vedere i log di caricamento e eventuali errori.</p>
+  </div>
+
+  <div class="content">
+    <h2>📚 Documentazione</h2>
+    <p>Per maggiori informazioni sull'integrazione WordPress, consulta:</p>
+    <ul>
+      <li><a href="/WORDPRESS-INTEGRATION.md">Guida integrazione WordPress</a></li>
+      <li><a href="/README.md">README del widget</a></li>
+      <li><a href="http://192.168.1.200:5055/docs">API Open-Notebook</a></li>
+    </ul>
+  </div>
+
+  <!-- AI Chat Widget Embed -->
+  <script>
+    window.AIWidgetConfig = {
+      baseUrl: 'http://localhost:3000' // Cambia con il tuo URL in produzione
+    };
+  </script>
+  <script src="/embed.js"></script>
+
+  <!-- Analytics opzionale -->
+  <script>
+    console.log('✅ Test page loaded');
+    console.log('🤖 AI Widget should initialize automatically');
+    
+    // Listener per debug
+    window.addEventListener('message', function(event) {
+      console.log('📨 Message from widget:', event.data);
+    });
+  </script>
+</body>
+</html>
