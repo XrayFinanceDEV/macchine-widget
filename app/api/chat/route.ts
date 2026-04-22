@@ -108,16 +108,24 @@ export async function POST(req: Request) {
           statusIdx++
         }, 8000)
 
+        // Hard timeout — leaves 5s headroom under Netlify Edge's 50s cap so we
+        // can emit a clean error instead of being killed mid-stream (which leaves
+        // the client showing a stuck status forever).
+        const abort = new AbortController()
+        const upstreamTimeout = setTimeout(() => abort.abort(), 45000)
+
         try {
           const response = await fetch(`${openNotebookEndpoint}/api/chat/rag/execute`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+            signal: abort.signal,
           })
 
           if (!response.ok) {
             const errorText = await response.text()
             clearInterval(statusTicker)
+            clearTimeout(upstreamTimeout)
             emit(controller, {
               e: `Errore dal server: ${response.status} ${response.statusText} — ${errorText.substring(0, 200)}`,
             })
@@ -128,6 +136,7 @@ export async function POST(req: Request) {
           const reader = response.body?.getReader()
           if (!reader) {
             clearInterval(statusTicker)
+            clearTimeout(upstreamTimeout)
             controller.close()
             return
           }
@@ -156,6 +165,7 @@ export async function POST(req: Request) {
                   const content = parsed.content || ''
                   if (!content) continue
                   clearInterval(statusTicker)
+                  clearTimeout(upstreamTimeout)
                   // Upstream sends accumulated content; only emit new tail.
                   if (content.length > accumulatedContent.length) {
                     const newContent = content.substring(accumulatedContent.length)
@@ -164,10 +174,12 @@ export async function POST(req: Request) {
                   }
                 } else if (parsed.type === 'complete') {
                   clearInterval(statusTicker)
+                  clearTimeout(upstreamTimeout)
                   controller.close()
                   return
                 } else if (parsed.type === 'error') {
                   clearInterval(statusTicker)
+                  clearTimeout(upstreamTimeout)
                   emit(controller, { e: parsed.message || 'Upstream error' })
                   controller.close()
                   return
@@ -179,11 +191,18 @@ export async function POST(req: Request) {
             }
           }
           clearInterval(statusTicker)
+          clearTimeout(upstreamTimeout)
           controller.close()
         } catch (error) {
           clearInterval(statusTicker)
-          const msg = error instanceof Error ? error.message : 'Unknown error'
-          emit(controller, { e: `Errore di rete: ${msg}` })
+          clearTimeout(upstreamTimeout)
+          const isAbort =
+            (error instanceof Error && error.name === 'AbortError') ||
+            abort.signal.aborted
+          const msg = isAbort
+            ? 'La richiesta sta impiegando troppo tempo. Il backend è lento — riprova con una domanda più specifica o attendi qualche secondo.'
+            : `Errore di rete: ${error instanceof Error ? error.message : 'Unknown error'}`
+          emit(controller, { e: msg })
           controller.close()
         }
       },
