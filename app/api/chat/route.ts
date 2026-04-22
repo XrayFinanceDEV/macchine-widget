@@ -81,6 +81,7 @@ export async function POST(req: Request) {
     const payload = {
       session_id: sessionId,
       message: currentQuestion,
+      notebook_id: notebookId,
       strategy_model: strategyModel,
       model_override: chatModel,
       stream: true
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
 
     console.log('Calling chat/rag/execute with:', {
       session_id: sessionId,
+      notebook_id: notebookId,
       message: currentQuestion.substring(0, 50) + '...',
       strategy_model: strategyModel
     })
