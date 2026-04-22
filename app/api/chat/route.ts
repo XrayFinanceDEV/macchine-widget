@@ -72,23 +72,36 @@ export async function POST(req: Request) {
 
     const encoder = new TextEncoder()
 
+    // Progressive status messages shown while waiting for upstream.
+    // Rotates every ~3.5s so the user sees the agent "thinking" — also
+    // keeps Netlify's proxy connection alive with regular bytes.
+    const statusMessages = [
+      "🔍 *L'agente ha cominciato la ricerca...*",
+      '📖 *Analizzando la normativa...*',
+      '⚙️ *Semplificando le complessità tecniche...*',
+      '🧠 *Rianalizzando le fonti pertinenti...*',
+      '💭 *Ripensando ancora prima di rispondere...*',
+      '📝 *Preparando la risposta...*',
+    ]
+
     const stream = new ReadableStream({
       async start(controller) {
-        // Flush the first byte immediately — fixes Netlify proxy 502s and
-        // gives the user feedback while the agent is searching.
-        controller.enqueue(
-          encoder.encode("🔍 *L'agente sta cercando nella normativa...*\n\n---\n\n")
-        )
+        // Flush the first status immediately — fixes Netlify proxy 502s and
+        // gives the user feedback the moment they hit send.
+        controller.enqueue(encoder.encode(statusMessages[0] + '\n\n'))
 
-        // Keep-alive ticker: emits a zero-width space every 8s while we wait
-        // for upstream. Invisible in rendered markdown, keeps proxies happy.
-        const keepAlive = setInterval(() => {
+        // Rotate through status messages every ~3.5s while we wait for
+        // upstream. Stops as soon as the real answer starts streaming.
+        let statusIdx = 1
+        const statusTicker = setInterval(() => {
+          if (statusIdx >= statusMessages.length) return
           try {
-            controller.enqueue(encoder.encode('​'))
+            controller.enqueue(encoder.encode(statusMessages[statusIdx] + '\n\n'))
+            statusIdx++
           } catch {
-            // controller already closed
+            // controller closed
           }
-        }, 8000)
+        }, 3500)
 
         try {
           const response = await fetch(`${openNotebookEndpoint}/api/chat/rag/execute`, {
@@ -99,7 +112,7 @@ export async function POST(req: Request) {
 
           if (!response.ok) {
             const errorText = await response.text()
-            clearInterval(keepAlive)
+            clearInterval(statusTicker)
             controller.enqueue(
               encoder.encode(
                 `\n\n⚠️ Errore dal server: ${response.status} ${response.statusText}\n${errorText.substring(0, 200)}`
@@ -111,7 +124,7 @@ export async function POST(req: Request) {
 
           const reader = response.body?.getReader()
           if (!reader) {
-            clearInterval(keepAlive)
+            clearInterval(statusTicker)
             controller.close()
             return
           }
@@ -140,9 +153,10 @@ export async function POST(req: Request) {
                 if (parsed.type === 'answer') {
                   const content = parsed.content || ''
                   if (!content) continue
-                  // Stop the keep-alive the moment real content starts
+                  // Stop rotating statuses and add a separator before the answer
                   if (!answerStarted) {
-                    clearInterval(keepAlive)
+                    clearInterval(statusTicker)
+                    controller.enqueue(encoder.encode('\n---\n\n'))
                     answerStarted = true
                   }
                   // Only emit new tail (upstream sends accumulated content)
@@ -152,25 +166,25 @@ export async function POST(req: Request) {
                     accumulatedContent = content
                   }
                 } else if (parsed.type === 'complete') {
-                  clearInterval(keepAlive)
+                  clearInterval(statusTicker)
                   controller.close()
                   return
                 } else if (parsed.type === 'error') {
-                  clearInterval(keepAlive)
+                  clearInterval(statusTicker)
                   controller.enqueue(encoder.encode(`\n\n⚠️ Errore: ${parsed.message}`))
                   controller.close()
                   return
                 }
-                // 'strategy' events are ignored — the initial status line covers UX
+                // 'strategy' events are ignored — the rotating statuses cover UX
               } catch {
                 // skip malformed SSE lines
               }
             }
           }
-          clearInterval(keepAlive)
+          clearInterval(statusTicker)
           controller.close()
         } catch (error) {
-          clearInterval(keepAlive)
+          clearInterval(statusTicker)
           const msg = error instanceof Error ? error.message : 'Unknown error'
           controller.enqueue(encoder.encode(`\n\n⚠️ Errore di rete: ${msg}`))
           controller.close()
