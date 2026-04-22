@@ -1,7 +1,9 @@
 import { cookies } from 'next/headers'
 
-// Allow streaming responses up to 30 seconds
-export const maxDuration = 30
+// Run on Edge runtime — Netlify Edge Functions allow ~50s and stream first-byte
+// without buffering (Node serverless functions cap at 26s and buffer, causing 502s).
+export const runtime = 'edge'
+export const maxDuration = 50
 
 // Session cookie name
 const SESSION_COOKIE = 'open_notebook_session'
