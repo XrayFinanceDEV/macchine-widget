@@ -67,6 +67,7 @@ export default function Home() {
         subtitle="Reg. (UE) 2023/1230"
         welcomeMessage="Ciao! Sono l'assistente AI sul Regolamento Macchine (UE) 2023/1230. Fammi una domanda sul testo del regolamento o sulle sue criticità applicative."
         quickActions={[
+          "✨ Cominciamo: dammi un indice generale del Nuovo Regolamento Macchine UE",
           "Quali macchine sono ad alto rischio nell'Allegato I?",
           "Qual è la differenza tra Parte A e Parte B?",
           "Cosa cambia rispetto alla Direttiva 2006/42/CE?",

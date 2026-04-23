@@ -12,6 +12,15 @@ const SESSION_COOKIE = 'open_notebook_session'
 //   {"c": "<text>"}   → content chunk (appends to the answer)
 //   {"e": "<text>"}   → error (client shows it inline)
 // Each object is on its own line terminated with \n.
+//
+// Upstream Open Notebook SSE events we consume (from /api/chat/rag/execute):
+//   planning / searching  → keep-alive pings during agent phases → {s} cycled
+//   plan { reasoning }    → short planning-agent output → {s} showing reasoning
+//   strategy { chunks_retrieved } → search complete → {s} "found N sources"
+//   answer_delta { content } → responding-agent token → {c} appended
+//   answer { content }    → final consolidated answer (ignored, already streamed)
+//   complete              → close stream
+//   error { message }     → propagate as {e}
 
 export async function POST(req: Request) {
   try {
@@ -77,15 +86,18 @@ export async function POST(req: Request) {
 
     const encoder = new TextEncoder()
 
-    // Rotating status messages — cycle indefinitely until upstream answer starts.
-    // Cycling guarantees continuous byte flow (no idle gap → no proxy 502).
-    const statusMessages = [
-      "🔍 *L'agente ha cominciato la ricerca...*",
-      '📖 *Analizzando la normativa...*',
-      '⚙️ *Semplificando le complessità tecniche...*',
-      '🧠 *Rianalizzando le fonti pertinenti...*',
-      '💭 *Ripensando ancora prima di rispondere...*',
-      '📝 *Preparando la risposta...*',
+    // Fallback status messages shown while upstream is in its keep-alive phases.
+    // Upstream sends `planning` / `searching` pings every ~3s; we cycle through
+    // these so the user sees life rather than one frozen line.
+    const planningMessages = [
+      "🔍 *L'agente sta pianificando la ricerca...*",
+      '🧠 *Analizzando la tua domanda...*',
+      '📋 *Scegliendo cosa cercare...*',
+    ]
+    const searchingMessages = [
+      '📖 *Cercando nella normativa...*',
+      '🗂️ *Scorrendo le fonti pertinenti...*',
+      '🔎 *Raccogliendo i passaggi rilevanti...*',
     ]
 
     const emit = (controller: ReadableStreamDefaultController<Uint8Array>, obj: object) => {
@@ -99,20 +111,15 @@ export async function POST(req: Request) {
     const stream = new ReadableStream({
       async start(controller) {
         // Flush first status immediately — fixes Netlify first-byte 502s.
-        emit(controller, { s: statusMessages[0] })
+        emit(controller, { s: planningMessages[0] })
 
-        // Rotate every 8s, cycling forever until the answer arrives.
-        let statusIdx = 1
-        const statusTicker = setInterval(() => {
-          emit(controller, { s: statusMessages[statusIdx % statusMessages.length] })
-          statusIdx++
-        }, 8000)
-
-        // Hard timeout — leaves 5s headroom under Netlify Edge's 50s cap so we
-        // can emit a clean error instead of being killed mid-stream (which leaves
-        // the client showing a stuck status forever).
+        // Hard timeout: leaves headroom under Netlify Edge's 50s cap so we can
+        // emit a clean error instead of being killed mid-stream.
         const abort = new AbortController()
         const upstreamTimeout = setTimeout(() => abort.abort(), 45000)
+
+        let planningTick = 0
+        let searchingTick = 0
 
         try {
           const response = await fetch(`${openNotebookEndpoint}/api/chat/rag/execute`, {
@@ -124,7 +131,6 @@ export async function POST(req: Request) {
 
           if (!response.ok) {
             const errorText = await response.text()
-            clearInterval(statusTicker)
             clearTimeout(upstreamTimeout)
             emit(controller, {
               e: `Errore dal server: ${response.status} ${response.statusText} — ${errorText.substring(0, 200)}`,
@@ -135,7 +141,6 @@ export async function POST(req: Request) {
 
           const reader = response.body?.getReader()
           if (!reader) {
-            clearInterval(statusTicker)
             clearTimeout(upstreamTimeout)
             controller.close()
             return
@@ -143,7 +148,6 @@ export async function POST(req: Request) {
 
           const decoder = new TextDecoder()
           let buffer = ''
-          let accumulatedContent = ''
 
           while (true) {
             const { done, value } = await reader.read()
@@ -158,43 +162,58 @@ export async function POST(req: Request) {
               const data = line.slice(6).trim()
               if (!data) continue
 
+              let parsed: { type?: string; content?: string; reasoning?: string; message?: string; chunks_retrieved?: number }
               try {
-                const parsed = JSON.parse(data)
+                parsed = JSON.parse(data)
+              } catch {
+                continue
+              }
 
-                if (parsed.type === 'answer') {
-                  const content = parsed.content || ''
-                  if (!content) continue
-                  clearInterval(statusTicker)
-                  clearTimeout(upstreamTimeout)
-                  // Upstream sends accumulated content; only emit new tail.
-                  if (content.length > accumulatedContent.length) {
-                    const newContent = content.substring(accumulatedContent.length)
-                    emit(controller, { c: newContent })
-                    accumulatedContent = content
-                  }
-                } else if (parsed.type === 'complete') {
-                  clearInterval(statusTicker)
+              switch (parsed.type) {
+                case 'planning': {
+                  const msg = planningMessages[planningTick % planningMessages.length]
+                  planningTick++
+                  emit(controller, { s: msg })
+                  break
+                }
+                case 'plan': {
+                  const reasoning = (parsed.reasoning || '').trim()
+                  if (reasoning) emit(controller, { s: `💡 *${reasoning}*` })
+                  break
+                }
+                case 'searching': {
+                  const msg = searchingMessages[searchingTick % searchingMessages.length]
+                  searchingTick++
+                  emit(controller, { s: msg })
+                  break
+                }
+                case 'strategy': {
+                  const n = parsed.chunks_retrieved ?? 0
+                  emit(controller, { s: `📚 *Trovate ${n} fonti pertinenti, sto preparando la risposta...*` })
+                  break
+                }
+                case 'answer_delta': {
+                  if (parsed.content) emit(controller, { c: parsed.content })
+                  break
+                }
+                case 'answer':
+                  // Final consolidated answer — already delivered via deltas. Skip.
+                  break
+                case 'complete':
                   clearTimeout(upstreamTimeout)
                   controller.close()
                   return
-                } else if (parsed.type === 'error') {
-                  clearInterval(statusTicker)
+                case 'error':
                   clearTimeout(upstreamTimeout)
                   emit(controller, { e: parsed.message || 'Upstream error' })
                   controller.close()
                   return
-                }
-                // strategy events are ignored — rotating statuses cover UX
-              } catch {
-                // skip malformed SSE lines
               }
             }
           }
-          clearInterval(statusTicker)
           clearTimeout(upstreamTimeout)
           controller.close()
         } catch (error) {
-          clearInterval(statusTicker)
           clearTimeout(upstreamTimeout)
           const isAbort =
             (error instanceof Error && error.name === 'AbortError') ||
