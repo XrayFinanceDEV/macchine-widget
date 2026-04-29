@@ -66,10 +66,15 @@ export async function POST(req: Request) {
       const sessionData = await createSessionResponse.json()
       sessionId = sessionData.id
       if (sessionId) {
+        // SameSite=None + Secure is required because the widget is loaded as an
+        // iframe on third-party sites (WordPress embeds). With Lax, browsers
+        // refuse to store/send the cookie from a cross-site iframe, which
+        // silently forces a fresh chat_session on every message and breaks
+        // multi-turn context (no prior messages → no condensation).
         cookieStore.set(SESSION_COOKIE, sessionId, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'lax',
+          secure: true,
+          sameSite: 'none',
           maxAge: 60 * 60 * 24,
         })
       }
